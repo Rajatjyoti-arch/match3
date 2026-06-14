@@ -1,468 +1,393 @@
 #include "raylib.h"
 #include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
 #include <stdbool.h>
+#include <time.h>
+#include <math.h>
 
-#define WINDOW_WIDTH    800
-#define WINDOW_HEIGHT   700
-#define GRID_ROWS       8
-#define GRID_COLS       8
-#define CELL_SIZE       64
-#define NUM_GEM_TYPES   6
-#define GRID_OFFSET_X   ((WINDOW_WIDTH - GRID_COLS * CELL_SIZE) / 2)   // = 144
-#define GRID_OFFSET_Y   130
-#define GEM_PADDING     3
-#define SWAP_SPEED      5.0f
-#define FALL_SPEED      600.0f    // pixels per second
-#define REMOVE_SPEED    4.0f      // scale shrink per second
+#define BOARD_SIZE 8
+#define TILE_SIZE 42
+#define TILE_TYPES 5
+#define SCORE_FONT_SIZE 32
+#define MAX_SCORE_POPUPS 32
 
-enum {
-    GEM_NONE   = 0,
-    GEM_RED    = 1,
-    GEM_BLUE   = 2,
-    GEM_GREEN  = 3,
-    GEM_YELLOW = 4,
-    GEM_PURPLE = 5,
-    GEM_ORANGE = 6
-};
+const char tile_chars[TILE_TYPES] = { '#', '@', '$', '%', '&' };
+
+char board[BOARD_SIZE][BOARD_SIZE];
+bool matched[BOARD_SIZE][BOARD_SIZE] = { 0 };
+float fall_offset[BOARD_SIZE][BOARD_SIZE] = { 0 };
+
+int score = 0;
+Vector2 grid_origin;
+Texture2D background;
+Font score_font;
+Vector2 selected_tile = { -1, -1 };
+float fall_speed = 8.0f;
+float match_delay_timer = 0.0f;
+const float MATCH_DELAY_DURATION = 0.2f;
+
+float score_scale = 1.0f;
+float score_scale_velocity = 0.0f;
+bool score_animating = false;
+
+Music background_music;
+Sound match_sound;
 
 typedef enum {
-    STATE_IDLE,
-    STATE_SWAP,
-    STATE_CHECK,
-    STATE_REMOVE,
-    STATE_FALL,
-    STATE_SWAP_BACK
-} GamePhase;
+	STATE_IDLE,
+	STATE_ANIMATING,
+	STATE_MATCH_DELAY
+} TileState;
+
+TileState tile_state;
 
 typedef struct {
-    int   type;      // GEM_NONE..GEM_ORANGE
-    float offsetX;   // pixel offset for swap animation
-    float offsetY;   // pixel offset for fall/swap animation
-    float scale;     // 1.0 = full size, 0.0 = invisible (for remove anim)
-    bool  matched;   // true = flagged for removal
-} Gem;
+	Vector2 position;
+	int amount;
+	float lifetime;
+	float alpha;
+	bool active;
+} ScorePopup;
 
-typedef struct {
-    Gem       grid[GRID_ROWS][GRID_COLS];
-    int       selectedRow, selectedCol;  // -1 = nothing selected
-    int       score;
-    int       combo;                     // cascade multiplier
-    GamePhase phase;
+ScorePopup score_popups[MAX_SCORE_POPUPS] = { 0 };
 
-    // Swap tracking
-    int   swapR1, swapC1, swapR2, swapC2;
-    float swapProgress;   // 0.0 → 1.0
-} GameState;
-
-Color GetGemColor(int type) {
-    switch (type) {
-        case GEM_RED:    return (Color){220,  50,  50, 255};
-        case GEM_BLUE:   return (Color){ 50, 100, 230, 255};
-        case GEM_GREEN:  return (Color){ 50, 200,  80, 255};
-        case GEM_YELLOW: return (Color){240, 220,  40, 255};
-        case GEM_PURPLE: return (Color){180,  50, 220, 255};
-        case GEM_ORANGE: return (Color){240, 150,  30, 255};
-        default:         return BLANK;
-    }
+char random_tile() {
+	return tile_chars[rand() % TILE_TYPES];
 }
 
-Color GetGemHighlight(int type) {
-    switch (type) {
-        case GEM_RED:    return (Color){255, 130, 130, 200};
-        case GEM_BLUE:   return (Color){140, 180, 255, 200};
-        case GEM_GREEN:  return (Color){140, 255, 160, 200};
-        case GEM_YELLOW: return (Color){255, 250, 150, 200};
-        case GEM_PURPLE: return (Color){230, 150, 255, 200};
-        case GEM_ORANGE: return (Color){255, 210, 140, 200};
-        default:         return BLANK;
-    }
+void swap_tiles(int x1, int y1, int x2, int y2) {
+	char temp = board[y1][x1];
+	board[y1][x1] = board[y2][x2];
+	board[y2][x2] = temp;
 }
 
-void InitGame(GameState *g) {
-    g->score = 0;
-    g->combo = 0;
-    g->phase = STATE_IDLE;
-    g->selectedRow = -1;
-    g->selectedCol = -1;
-    
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            int type;
-            do {
-                type = GetRandomValue(1, NUM_GEM_TYPES);
-            } while (
-                (col >= 2 
-                 && g->grid[row][col-1].type == type 
-                 && g->grid[row][col-2].type == type) 
-                || 
-                (row >= 2 
-                 && g->grid[row-1][col].type == type 
-                 && g->grid[row-2][col].type == type)
-            );
-            
-            g->grid[row][col].type = type;
-            g->grid[row][col].offsetX = 0.0f;
-            g->grid[row][col].offsetY = 0.0f;
-            g->grid[row][col].scale = 1.0f;
-            g->grid[row][col].matched = false;
-        }
-    }
+bool are_tiles_adjacent(Vector2 a, Vector2 b) {
+	return (abs((int)a.x - (int)b.x) + abs((int)a.y - (int)b.y)) == 1;
 }
 
-void HandleInput(GameState *g) {
-    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
-    
-    int mouseX = GetMouseX();
-    int mouseY = GetMouseY();
-    
-    // Check raw pixel bounds BEFORE integer division to avoid
-    // negative-division-truncation bug (e.g. (-1)/64 == 0 in C)
-    if (mouseX < GRID_OFFSET_X || mouseY < GRID_OFFSET_Y) return;
-    
-    int col = (mouseX - GRID_OFFSET_X) / CELL_SIZE;
-    int row = (mouseY - GRID_OFFSET_Y) / CELL_SIZE;
-    
-    if (row >= GRID_ROWS || col >= GRID_COLS) return;
-    
-    if (g->selectedRow == -1) {
-        g->selectedRow = row;
-        g->selectedCol = col;
-        return;
-    }
-    
-    if (row == g->selectedRow && col == g->selectedCol) {
-        g->selectedRow = -1;
-        g->selectedCol = -1;
-        return;
-    }
-    
-    int dr = abs(row - g->selectedRow);
-    int dc = abs(col - g->selectedCol);
-    
-    if ((dr == 1 && dc == 0) || (dr == 0 && dc == 1)) {
-        g->swapR1 = g->selectedRow;
-        g->swapC1 = g->selectedCol;
-        g->swapR2 = row;
-        g->swapC2 = col;
-        g->swapProgress = 0.0f;
-        g->combo = 0;
-        g->phase = STATE_SWAP;
-        g->selectedRow = -1;
-        g->selectedCol = -1;
-    } else {
-        g->selectedRow = row;
-        g->selectedCol = col;
-    }
+void add_score_popup(int x, int y, int amount, Vector2 grid_origin) {
+	for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+		if (!score_popups[i].active) {
+			score_popups[i].position = (Vector2){
+				grid_origin.x + x * TILE_SIZE + TILE_SIZE / 2,
+				grid_origin.y + y * TILE_SIZE + TILE_SIZE / 2
+			};
+			score_popups[i].amount = amount;
+			score_popups[i].lifetime = 1.0f;
+			score_popups[i].alpha = 1.0f;
+			score_popups[i].active = true;
+			break;
+		}
+	}
 }
 
-void SwapGemData(GameState *g) {
-    Gem temp = g->grid[g->swapR1][g->swapC1];
-    g->grid[g->swapR1][g->swapC1] = g->grid[g->swapR2][g->swapC2];
-    g->grid[g->swapR2][g->swapC2] = temp;
-    
-    g->grid[g->swapR1][g->swapC1].offsetX = 0;
-    g->grid[g->swapR1][g->swapC1].offsetY = 0;
-    g->grid[g->swapR2][g->swapC2].offsetX = 0;
-    g->grid[g->swapR2][g->swapC2].offsetY = 0;
+bool find_matches() {
+	bool found = false;
+	for (int y = 0; y < BOARD_SIZE; y++) {
+		for (int x = 0; x < BOARD_SIZE; x++) {
+			matched[y][x] = false;
+		}
+	}
+
+	for (int y = 0; y < BOARD_SIZE; y++) {
+		for (int x = 0; x < BOARD_SIZE - 2; x++) {
+			char t = board[y][x];
+			if (t == board[y][x + 1] &&
+				t == board[y][x + 2]) {
+				matched[y][x] = matched[y][x + 1] = matched[y][x + 2] = true;
+				// update score
+				score += 10;
+				found = true;
+				PlaySound(match_sound);
+
+				score_animating = true;
+				score_scale = 2.0f;
+				score_scale_velocity = -2.5f;
+
+				add_score_popup(x, y, 10, grid_origin);
+			}
+		}
+	}
+
+	for (int x = 0; x < BOARD_SIZE; x++) {
+		for (int y = 0; y < BOARD_SIZE - 2; y++) {
+			char t = board[y][x];
+			if (t == board[y + 1][x] &&
+				t == board[y + 2][x]) {
+				matched[y][x] = matched[y + 1][x] = matched[y + 2][x] = true;
+				score += 10;
+				found = true;
+				PlaySound(match_sound);
+
+				score_animating = true;
+				score_scale = 2.0f;
+				score_scale_velocity = -2.5f;
+
+				add_score_popup(x, y, 10, grid_origin);
+			}
+		}
+	}
+
+	return found;
 }
 
-void UpdateSwap(GameState *g) {
-    g->swapProgress += SWAP_SPEED * GetFrameTime();
-    if (g->swapProgress > 1.0f) g->swapProgress = 1.0f;
-    
-    float dx = (g->swapC2 - g->swapC1) * CELL_SIZE * g->swapProgress;
-    float dy = (g->swapR2 - g->swapR1) * CELL_SIZE * g->swapProgress;
-    
-    g->grid[g->swapR1][g->swapC1].offsetX = dx;
-    g->grid[g->swapR1][g->swapC1].offsetY = dy;
-    
-    g->grid[g->swapR2][g->swapC2].offsetX = -dx;
-    g->grid[g->swapR2][g->swapC2].offsetY = -dy;
-    
-    if (g->swapProgress >= 1.0f) {
-        SwapGemData(g);
-        g->phase = STATE_CHECK;
-    }
+void resolve_matches() {
+	for (int x = 0; x < BOARD_SIZE; x++) {
+		int write_y = BOARD_SIZE - 1;
+		for (int y = BOARD_SIZE - 1; y >= 0; y--) {
+			if (!matched[y][x]) {
+				if (y != write_y) {
+					board[write_y][x] = board[y][x];
+					fall_offset[write_y][x] = (write_y - y) * TILE_SIZE;
+					board[y][x] = ' ';
+				}
+				write_y--;
+			}
+		}
+
+		// fill empty spots with new random tiles
+		while (write_y >= 0) {
+			board[write_y][x] = random_tile();
+			fall_offset[write_y][x] = (write_y + 1) * TILE_SIZE;
+			write_y--;
+		}
+	}
+
+	tile_state = STATE_ANIMATING;
 }
 
-void UpdateSwapBack(GameState *g) {
-    g->swapProgress += SWAP_SPEED * GetFrameTime();
-    if (g->swapProgress > 1.0f) g->swapProgress = 1.0f;
-    
-    float remaining = 1.0f - g->swapProgress;
-    
-    g->grid[g->swapR1][g->swapC1].offsetX = (g->swapC2 - g->swapC1) * CELL_SIZE * remaining;
-    g->grid[g->swapR1][g->swapC1].offsetY = (g->swapR2 - g->swapR1) * CELL_SIZE * remaining;
-    g->grid[g->swapR2][g->swapC2].offsetX = (g->swapC1 - g->swapC2) * CELL_SIZE * remaining;
-    g->grid[g->swapR2][g->swapC2].offsetY = (g->swapR1 - g->swapR2) * CELL_SIZE * remaining;
-    
-    if (g->swapProgress >= 1.0f) {
-        g->grid[g->swapR1][g->swapC1].offsetX = 0;
-        g->grid[g->swapR1][g->swapC1].offsetY = 0;
-        g->grid[g->swapR2][g->swapC2].offsetX = 0;
-        g->grid[g->swapR2][g->swapC2].offsetY = 0;
-        g->phase = STATE_IDLE;
-    }
-}
+void init_board() {
+	for (int y = 0; y < BOARD_SIZE; y++) {
+		for (int x = 0; x < BOARD_SIZE; x++) {
+			board[y][x] = random_tile();
+		}
+	}
 
-bool FindAndMarkMatches(GameState *g) {
-    bool matchFound = false;
-    
-    // Horizontal scan
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS - 2; col++) {
-            int type = g->grid[row][col].type;
-            if (type != GEM_NONE 
-                && g->grid[row][col+1].type == type 
-                && g->grid[row][col+2].type == type) {
-                
-                int k = col;
-                while (k < GRID_COLS && g->grid[row][k].type == type) {
-                    g->grid[row][k].matched = true;
-                    k++;
-                }
-                matchFound = true;
-            }
-        }
-    }
-    
-    // Vertical scan
-    for (int col = 0; col < GRID_COLS; col++) {
-        for (int row = 0; row < GRID_ROWS - 2; row++) {
-            int type = g->grid[row][col].type;
-            if (type != GEM_NONE 
-                && g->grid[row+1][col].type == type 
-                && g->grid[row+2][col].type == type) {
-                
-                int k = row;
-                while (k < GRID_ROWS && g->grid[k][col].type == type) {
-                    g->grid[k][col].matched = true;
-                    k++;
-                }
-                matchFound = true;
-            }
-        }
-    }
-    
-    if (matchFound) {
-        g->combo++;
-        int count = 0;
-        for (int row = 0; row < GRID_ROWS; row++) {
-            for (int col = 0; col < GRID_COLS; col++) {
-                if (g->grid[row][col].matched) count++;
-            }
-        }
-        g->score += count * 10 * g->combo;
-        g->phase = STATE_REMOVE;
-    } else if (g->combo == 0) {
-        SwapGemData(g);
-        
-        g->grid[g->swapR1][g->swapC1].offsetX = (g->swapC2 - g->swapC1) * CELL_SIZE;
-        g->grid[g->swapR1][g->swapC1].offsetY = (g->swapR2 - g->swapR1) * CELL_SIZE;
-        g->grid[g->swapR2][g->swapC2].offsetX = (g->swapC1 - g->swapC2) * CELL_SIZE;
-        g->grid[g->swapR2][g->swapC2].offsetY = (g->swapR1 - g->swapR2) * CELL_SIZE;
-        
-        g->swapProgress = 0.0f;
-        g->phase = STATE_SWAP_BACK;
-    } else {
-        g->combo = 0;
-        g->phase = STATE_IDLE;
-    }
-    
-    return matchFound;
-}
+	int grid_width = BOARD_SIZE * TILE_SIZE;
+	int grid_height = BOARD_SIZE * TILE_SIZE;
 
-// Forward declarations because the blueprint has UpdateRemove before these functions
-void ApplyGravity(GameState *g);
-void FillEmptyCells(GameState *g);
+	grid_origin = (Vector2){
+		(GetScreenWidth() - grid_width) / 2,
+		(GetScreenHeight() - grid_height) / 2
+	};
 
-void UpdateRemove(GameState *g) {
-    bool allDone = true;
-    
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            if (g->grid[row][col].matched) {
-                g->grid[row][col].scale -= REMOVE_SPEED * GetFrameTime();
-                if (g->grid[row][col].scale <= 0.0f) {
-                    g->grid[row][col].scale = 0.0f;
-                    g->grid[row][col].type = GEM_NONE;
-                    g->grid[row][col].matched = false;
-                } else {
-                    allDone = false;
-                }
-            }
-        }
-    }
-    
-    if (allDone) {
-        ApplyGravity(g);
-        FillEmptyCells(g);
-        g->phase = STATE_FALL;
-    }
-}
-
-void ApplyGravity(GameState *g) {
-    for (int col = 0; col < GRID_COLS; col++) {
-        int writeRow = GRID_ROWS - 1;
-        for (int row = GRID_ROWS - 1; row >= 0; row--) {
-            if (g->grid[row][col].type != GEM_NONE) {
-                if (writeRow != row) {
-                    g->grid[writeRow][col] = g->grid[row][col];
-                    g->grid[writeRow][col].offsetY = (float)(row - writeRow) * CELL_SIZE;
-                    
-                    g->grid[row][col].type = GEM_NONE;
-                    g->grid[row][col].matched = false;
-                    g->grid[row][col].scale = 1.0f;
-                    g->grid[row][col].offsetY = 0.0f;
-                }
-                writeRow--;
-            }
-        }
-    }
-}
-
-void FillEmptyCells(GameState *g) {
-    for (int col = 0; col < GRID_COLS; col++) {
-        int emptyCount = 0;
-        for (int row = 0; row < GRID_ROWS; row++) {
-            if (g->grid[row][col].type == GEM_NONE) {
-                emptyCount++;
-            }
-        }
-        
-        int fillIndex = 0;
-        for (int row = 0; row < GRID_ROWS; row++) {
-            if (g->grid[row][col].type == GEM_NONE) {
-                g->grid[row][col].type = GetRandomValue(1, NUM_GEM_TYPES);
-                g->grid[row][col].matched = false;
-                g->grid[row][col].scale = 1.0f;
-                g->grid[row][col].offsetX = 0.0f;
-                g->grid[row][col].offsetY = -(float)(emptyCount - fillIndex) * CELL_SIZE;
-                fillIndex++;
-            }
-        }
-    }
-}
-
-void UpdateFall(GameState *g) {
-    bool allSettled = true;
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            if (g->grid[row][col].offsetY < -0.5f) {
-                g->grid[row][col].offsetY += FALL_SPEED * GetFrameTime();
-                if (g->grid[row][col].offsetY > 0.0f) {
-                    g->grid[row][col].offsetY = 0.0f;
-                } else {
-                    allSettled = false;
-                }
-            }
-        }
-    }
-    
-    if (allSettled) {
-        g->phase = STATE_CHECK;
-    }
-}
-
-void UpdateGame(GameState *g) {
-    switch (g->phase) {
-        case STATE_IDLE:      HandleInput(g);            break;
-        case STATE_SWAP:      UpdateSwap(g);             break;
-        case STATE_CHECK:     FindAndMarkMatches(g);     break;
-        case STATE_REMOVE:    UpdateRemove(g);           break;
-        case STATE_FALL:      UpdateFall(g);             break;
-        case STATE_SWAP_BACK: UpdateSwapBack(g);         break;
-    }
-}
-
-void DrawGem(int type, float cx, float cy, float scale, bool selected) {
-    if (type == GEM_NONE || scale < 0.01f) return;
-    
-    float halfSize = (CELL_SIZE - 2*GEM_PADDING) * scale / 2.0f;
-    Rectangle rect = {cx - halfSize, cy - halfSize, halfSize*2, halfSize*2};
-    
-    DrawRectangleRounded((Rectangle){rect.x+2, rect.y+2, rect.width, rect.height}, 0.3f, 6, (Color){0,0,0,60});
-    DrawRectangleRounded(rect, 0.3f, 6, GetGemColor(type));
-    
-    Rectangle hlRect = {cx - halfSize*0.5f, cy - halfSize*0.7f, halfSize*1.0f, halfSize*0.5f};
-    DrawRectangleRounded(hlRect, 0.5f, 6, GetGemHighlight(type));
-    
-    if (selected) {
-        float pulse = 0.7f + 0.3f * sinf(GetTime() * 6.0f);
-        unsigned char alpha = (unsigned char)(255 * pulse);
-        DrawRectangleRoundedLinesEx(
-            (Rectangle){cx-halfSize-3, cy-halfSize-3, halfSize*2+6, halfSize*2+6},
-            0.3f, 6, 3.0f, (Color){255,255,255,alpha}
-        );
-    }
-}
-
-
-
-void DrawGame(const GameState *g) {
-    BeginDrawing();
-    
-    DrawRectangleGradientV(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT,
-        (Color){15, 10, 40, 255}, (Color){30, 20, 60, 255});
-
-    DrawText("MATCH 3", WINDOW_WIDTH/2 - MeasureText("MATCH 3", 40)/2, 20, 40,
-        (Color){255, 220, 100, 255});
-
-    char scoreBuf[64];
-    snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d", g->score);
-    DrawText(scoreBuf, WINDOW_WIDTH/2 - MeasureText(scoreBuf, 28)/2, 72, 28, WHITE);
-
-    if (g->combo > 1) {
-        char comboBuf[32];
-        snprintf(comboBuf, sizeof(comboBuf), "x%d COMBO!", g->combo);
-        DrawText(comboBuf, WINDOW_WIDTH/2 - MeasureText(comboBuf,24)/2, 100, 24,
-            (Color){255, 100, 100, 255});
-    }
-
-    DrawRectangleRounded(
-        (Rectangle){GRID_OFFSET_X-6, GRID_OFFSET_Y-6,
-                     GRID_COLS*CELL_SIZE+12, GRID_ROWS*CELL_SIZE+12},
-        0.02f, 6, (Color){255,255,255,20});
-
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            float x = GRID_OFFSET_X + col * CELL_SIZE;
-            float y = GRID_OFFSET_Y + row * CELL_SIZE;
-            unsigned char shade = ((row + col) % 2 == 0) ? 25 : 35;
-            DrawRectangle(x, y, CELL_SIZE, CELL_SIZE, (Color){shade, shade, shade+15, 255});
-        }
-    }
-
-    for (int row = 0; row < GRID_ROWS; row++) {
-        for (int col = 0; col < GRID_COLS; col++) {
-            Gem gem = g->grid[row][col];
-            if (gem.type == GEM_NONE) continue;
-            
-            float cx = GRID_OFFSET_X + col*CELL_SIZE + CELL_SIZE/2.0f + gem.offsetX;
-            float cy = GRID_OFFSET_Y + row*CELL_SIZE + CELL_SIZE/2.0f + gem.offsetY;
-            bool isSelected = (row == g->selectedRow && col == g->selectedCol);
-            
-            DrawGem(gem.type, cx, cy, gem.scale, isSelected);
-        }
-    }
-
-    EndDrawing();
+	if (find_matches()) {
+		resolve_matches();
+	}
+	else {
+		tile_state = STATE_IDLE;
+	}
 }
 
 int main(void) {
-    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Match 3");
-    SetTargetFPS(60);
+	const int screen_width = 800;
+	const int screen_height = 450;
 
-    GameState game;
-    InitGame(&game);
+	InitWindow(screen_width, screen_height, "Raylib 2D ASCII MATCH");
+	SetTargetFPS(60);
+	srand(time(NULL));
 
-    while (!WindowShouldClose()) {
-        UpdateGame(&game);
-        DrawGame(&game);
-    }
+	InitAudioDevice();
 
-    CloseWindow();
-    return 0;
+	background = LoadTexture("assets/background.jpg");
+	score_font = LoadFontEx("assets/04b03.ttf", SCORE_FONT_SIZE, NULL, 0);
+	background_music = LoadMusicStream("assets/prismx27s-edge-246705.mp3");
+	match_sound = LoadSound("assets/match.mp3");
+
+	PlayMusicStream(background_music);
+
+	// turn down music stream a tad
+	SetMusicVolume(background_music, 0.60f);
+
+	// lower sound effect volume a tad
+	SetSoundVolume(match_sound, 0.40f);
+
+	init_board();
+	Vector2 mouse = { 0, 0 };
+
+	while (!WindowShouldClose()) {
+
+		UpdateMusicStream(background_music);
+
+		// update game logic
+		mouse = GetMousePosition();
+		if (tile_state == STATE_IDLE && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+			int x = (mouse.x - grid_origin.x) / TILE_SIZE;
+			int y = (mouse.y - grid_origin.y) / TILE_SIZE;
+			if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
+				Vector2 current_tile = (Vector2){ x, y };
+				if (selected_tile.x < 0) {
+					selected_tile = current_tile;
+				}
+				else {
+					if (are_tiles_adjacent(selected_tile, current_tile)) {
+						swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
+						if (find_matches()) {
+							resolve_matches();
+						}
+						else {
+							swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
+						}
+					}
+					selected_tile = (Vector2){ -1, -1 };
+				}
+			}
+		}
+
+		if (tile_state == STATE_ANIMATING) {
+			bool still_animating = false;
+
+			for (int y = 0; y < BOARD_SIZE; y++) {
+				for (int x = 0; x < BOARD_SIZE; x++) {
+					if (fall_offset[y][x] > 0) {
+						fall_offset[y][x] -= fall_speed;
+						if (fall_offset[y][x] < 0) {
+							fall_offset[y][x] = 0;
+						}
+						else {
+							still_animating = true;
+						}
+
+					}
+				}
+			}
+
+			if (!still_animating) {
+				tile_state = STATE_MATCH_DELAY;
+				match_delay_timer = MATCH_DELAY_DURATION;
+			}
+		}
+
+		if (tile_state == STATE_MATCH_DELAY) {
+			match_delay_timer -= GetFrameTime();
+			if (match_delay_timer <= 0.0f) {
+				if (find_matches()) {
+					resolve_matches();
+				}
+				else {
+					tile_state = STATE_IDLE;
+				}
+			}
+		}
+
+		// update our score popups array
+		for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+			if (score_popups[i].active) {
+				score_popups[i].lifetime -= GetFrameTime();
+				score_popups[i].position.y -= 30 * GetFrameTime();
+				score_popups[i].alpha = score_popups[i].lifetime;
+
+				if (score_popups[i].lifetime <= 0.0f) {
+					score_popups[i].active = false;
+				}
+			}
+		}
+
+		// update the score animation
+		if (score_animating) {
+			score_scale += score_scale_velocity * GetFrameTime();
+			if (score_scale <= 1.0f) {
+				score_scale = 1.0f;
+				score_animating = false;
+			}
+		}
+		
+
+		BeginDrawing();
+		ClearBackground(BLACK);
+
+		DrawTexturePro(
+			background,
+			(Rectangle) {
+			0, 0, background.width, background.height
+		},
+			(Rectangle) {
+			0, 0, GetScreenWidth(), GetScreenHeight()
+		},
+			(Vector2) {
+			0, 0
+		},
+			0.0f,
+			WHITE
+		);
+
+		DrawRectangle(
+			grid_origin.x,
+			grid_origin.y,
+			BOARD_SIZE* TILE_SIZE,
+			BOARD_SIZE* TILE_SIZE,
+			Fade(DARKGRAY, 0.60f)
+		);
+
+		for (int y = 0; y < BOARD_SIZE; y++) {
+			for (int x = 0; x < BOARD_SIZE; x++) {
+				Rectangle rect = {
+					grid_origin.x + (x * TILE_SIZE),
+					grid_origin.y + (y * TILE_SIZE),
+					TILE_SIZE,
+					TILE_SIZE
+				};
+
+				DrawRectangleLinesEx(rect, 1, DARKGRAY);
+
+				if (board[y][x] != ' ') {
+					DrawTextEx(
+						GetFontDefault(),
+						TextFormat("%c", board[y][x]),
+						(Vector2) {
+							rect.x + 12,
+							rect.y + 8 - fall_offset[y][x]
+						},
+						20,
+						1,
+						matched[y][x] ? GREEN : WHITE
+					);
+				}
+			}
+		}
+
+		// draw selected tile
+		if (selected_tile.x >= 0) {
+			DrawRectangleLinesEx((Rectangle) {
+				grid_origin.x + (selected_tile.x * TILE_SIZE),
+					grid_origin.y + (selected_tile.y * TILE_SIZE),
+					TILE_SIZE, TILE_SIZE
+			}, 2, YELLOW);
+		}
+
+		DrawTextEx(
+			score_font,
+			TextFormat("SCORE: %d", score),
+			(Vector2) {
+			20, 20
+		},
+			SCORE_FONT_SIZE * score_scale,
+			1.0f,
+			YELLOW
+		);
+
+		// draw score popups
+		for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+			if (score_popups[i].active) {
+				Color c = Fade(YELLOW, score_popups[i].alpha);
+				DrawText(
+					TextFormat("+%d", score_popups[i].amount),
+					score_popups[i].position.x,
+					score_popups[i].position.y,
+					20, c);
+			}
+		}
+
+		EndDrawing();
+	}
+
+	StopMusicStream(background_music);
+	UnloadMusicStream(background_music);
+	UnloadSound(match_sound);
+	UnloadTexture(background);
+	UnloadFont(score_font);
+
+	CloseAudioDevice();
+
+	CloseWindow();
+	return 0;
 }
