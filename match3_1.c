@@ -17,9 +17,18 @@ float fall_offset[BOARD_SIZE][BOARD_SIZE] = {0};
 int score = 200;
 Vector2 grid_origin;
 Texture2D background;
-Vector2 selected_tile = {-1 , -1};
+Vector2 selected_tile = { -1, -1 };
 float fall_speed = 8.0f;
-bool animating = false;
+float match_delay_timer = 0.0f;
+const float MATCH_DELAY_DURATION = 0.2f;
+
+typedef enum {
+	STATE_IDLE,
+	STATE_ANIMATING,
+	STATE_MATCH_DELAY
+} TileState;
+
+TileState tile_state;
 
 char random_tile() {
 	return tile_chars[rand() % TILE_TYPES];
@@ -89,6 +98,8 @@ void resolve_matches() {
 			write_y--;
 		}
 	}
+
+	tile_state = STATE_ANIMATING;
 }
 
 void init_board() {
@@ -109,13 +120,16 @@ void init_board() {
 	if (find_matches()) {
 		resolve_matches();
 	}
+	else {
+		tile_state = STATE_IDLE;
+	}
 }
 
 int main(void) {
     const int screen_width = 800;
     const int screen_height = 450;
 
-    InitWindow(screen_width, screen_height, "GAME");
+	InitWindow(screen_width, screen_height, "Raylib 2D ASCII MATCH");
     SetTargetFPS(60);
     srand(time(NULL));
 
@@ -126,49 +140,65 @@ int main(void) {
 
     while(!WindowShouldClose()) {
 
-        mouse = GetMousePosition();
-        if (!animating && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            int x = (mouse.x - grid_origin.x) / TILE_SIZE;
-            int y = (mouse.y - grid_origin.y) / TILE_SIZE;
-            if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
-                Vector2 current_tile = (Vector2){ x, y };
-                if (selected_tile.x < 0) {
-                    selected_tile = current_tile;
-                }
-                else {
-                    if (are_tiles_adjacent(selected_tile, current_tile)) {
-                        swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
-                        if (find_matches()) {
-                            resolve_matches();
-                            animating = true;
-                        }
-                        else {
-                            swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
-                        }
-                    }
-                    selected_tile = (Vector2){ -1, -1 };
-                }
-            }
-        }
+		mouse = GetMousePosition();
+		if (tile_state == STATE_IDLE && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+			int x = (mouse.x - grid_origin.x) / TILE_SIZE;
+			int y = (mouse.y - grid_origin.y) / TILE_SIZE;
+			if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
+				Vector2 current_tile = (Vector2){ x, y };
+				if (selected_tile.x < 0) {
+					selected_tile = current_tile;
+				}
+				else {
+					if (are_tiles_adjacent(selected_tile, current_tile)) {
+						swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
+						if (find_matches()) {
+							resolve_matches();
+						}
+						else {
+							swap_tiles(selected_tile.x, selected_tile.y, current_tile.x, current_tile.y);
+						}
+					}
+					selected_tile = (Vector2){ -1, -1 };
+				}
+			}
+		}
 
-        if (animating) {
-            bool still_falling = false;
-            for (int y = 0; y < BOARD_SIZE; y++) {
-                for (int x = 0; x < BOARD_SIZE; x++) {
-                    if (fall_offset[y][x] > 0) {
-                        fall_offset[y][x] -= fall_speed;
-                        if (fall_offset[y][x] < 0) fall_offset[y][x] = 0;
-                        if (fall_offset[y][x] > 0) still_falling = true;
-                    }
-                }
-            }
-            if (!still_falling) animating = false;
-        } else {
-            if (find_matches()) {
-                resolve_matches();
-                animating = true;
-            }
-        }
+		if (tile_state == STATE_ANIMATING) {
+			bool still_animating = false;
+
+			for (int y = 0; y < BOARD_SIZE; y++) {
+				for (int x = 0; x < BOARD_SIZE; x++) {
+					if (fall_offset[y][x] > 0) {
+						fall_offset[y][x] -= fall_speed;
+						if (fall_offset[y][x] < 0) {
+							fall_offset[y][x] = 0;
+						}
+						else {
+							still_animating = true;
+						}
+
+					}
+				}
+			}
+
+			if (!still_animating) {
+				tile_state = STATE_MATCH_DELAY;
+				match_delay_timer = MATCH_DELAY_DURATION;
+			}
+		}
+
+		if (tile_state == STATE_MATCH_DELAY) {
+			match_delay_timer -= GetFrameTime();
+			if (match_delay_timer <= 0.0f) {
+				if (find_matches()) {
+					resolve_matches();
+				}
+				else {
+					tile_state = STATE_IDLE;
+				}
+			}
+		}
 
         BeginDrawing();
         ClearBackground(BLACK);
@@ -196,44 +226,41 @@ int main(void) {
 			Fade(DARKGRAY, 0.60f)
 		);
 
-        for (int y = 0; y < BOARD_SIZE; y++)
-        {
-            for (int x= 0; x < BOARD_SIZE; x++)
-            {
-                Rectangle rect = 
-                {
-                    grid_origin.x + (x * TILE_SIZE),
-                    grid_origin.y + (y * TILE_SIZE),
-                    TILE_SIZE,
-                    TILE_SIZE,
-                };
+		for (int y = 0; y < BOARD_SIZE; y++) {
+			for (int x = 0; x < BOARD_SIZE; x++) {
+				Rectangle rect = {
+					grid_origin.x + (x * TILE_SIZE),
+					grid_origin.y + (y * TILE_SIZE),
+					TILE_SIZE,
+					TILE_SIZE
+				};
 
-                DrawRectangleLinesEx(rect, 1, DARKGRAY);
+				DrawRectangleLinesEx(rect, 1, DARKGRAY);
 
-                if (board[y][x] != ' ')
-                DrawTextEx
-                (
-                    GetFontDefault(),
-                    TextFormat("%c", board[y][x]),
-                    (Vector2)
-                    {
-                    rect.x + 12, 
-                    rect.y +8 - fall_offset[y][x]
-                    },
-                    20, 
-                    1, 
-                    matched[y][x] ? GREEN : WHITE 
-                );
-            }
-        }
-        
-        if (selected_tile.x >= 0) {
-            DrawRectangleLinesEx((Rectangle) {
-                grid_origin.x + (selected_tile.x * TILE_SIZE),
-                    grid_origin.y + (selected_tile.y * TILE_SIZE),
-                    TILE_SIZE, TILE_SIZE
-            }, 2, YELLOW);
-        }
+				if (board[y][x] != ' ') {
+					DrawTextEx(
+						GetFontDefault(),
+						TextFormat("%c", board[y][x]),
+						(Vector2) {
+							rect.x + 12,
+							rect.y + 8 - fall_offset[y][x]
+						},
+						20,
+						1,
+						matched[y][x] ? GREEN : WHITE
+					);
+				}
+			}
+		}
+
+		// draw selected tile
+		if (selected_tile.x >= 0) {
+			DrawRectangleLinesEx((Rectangle) {
+				grid_origin.x + (selected_tile.x * TILE_SIZE),
+					grid_origin.y + (selected_tile.y * TILE_SIZE),
+					TILE_SIZE, TILE_SIZE
+			}, 2, YELLOW);
+		}
 
         DrawText(TextFormat("Score : %d", score), 20,20, 24, WHITE);
 
