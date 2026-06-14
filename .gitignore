@@ -6,3 +6,4 @@ match3_1
 raylib_src/
 auto_push.sh
 auto_push.log
+emsdk/
