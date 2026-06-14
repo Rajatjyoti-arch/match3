@@ -47,9 +47,6 @@ typedef struct {
 } ScorePopup;
 
 ScorePopup score_popups[MAX_SCORE_POPUPS] = {0};
-
-
-
 char random_tile() {
 	return tile_chars[rand() % TILE_TYPES];
 }
