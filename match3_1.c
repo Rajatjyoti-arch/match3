@@ -99,7 +99,7 @@ bool find_matches() {
                 PlaySound(match_sound);
 
                 score_animating = true;
-                score_scale_velocity = 2.0f;
+                score_scale = 2.0f;
                 score_scale_velocity = -2.5f;
 
                add_score_popup(x, y,10, grid_origin);
@@ -118,7 +118,7 @@ bool find_matches() {
                 PlaySound(match_sound);
 
                 score_animating = true;
-                score_scale_velocity = 2.0f;
+                score_scale = 2.0f;
                 score_scale_velocity = -2.5f;
 
                 add_score_popup(x, y, 10, grid_origin);
@@ -338,7 +338,7 @@ int main(void) {
 			}, 2, YELLOW);
 		}
 
-        DrawText(TextFormat("Score : %d", score), 20,20, 24, WHITE);
+        DrawTextEx(GetFontDefault(), TextFormat("Score : %d", score), (Vector2){20, 20}, 24 * score_scale, 1, WHITE);
 
         for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
             if (score_popups[i].active) {
