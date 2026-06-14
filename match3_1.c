@@ -7,6 +7,7 @@
 #define BOARD_SIZE 8
 #define TILE_SIZE 42
 #define TILE_TYPES 5
+#define MAX_SCORE_POPUPS 100
 
 const char tile_chars[TILE_TYPES] = { '#', '@', '$', '%', '&' };
 
@@ -40,7 +41,7 @@ typedef struct {
     bool active;
 } ScorePopup;
 
-ScorePopup score_popups[100];
+ScorePopup score_popups[MAX_SCORE_POPUPS] = {0};
 
 
 
@@ -57,6 +58,23 @@ void swap_tiles(int x1, int y1, int x2, int y2) {
 bool are_tiles_adjacent(Vector2 a, Vector2 b) {
     return (abs((int)a.x - (int)b.x) + abs((int)a.y - (int)b.y)) == 1;
 }
+
+void add_score_popup(int x, int y, int amount, Vector2 grid_origin) {
+	for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+		if (!score_popups[i].active) {
+			score_popups[i].position = (Vector2) {
+				grid_origin.x + x * TILE_SIZE,
+				grid_origin.y + y * TILE_SIZE
+			};
+			score_popups[i].amount = amount;
+			score_popups[i].lifetime = 1.0f;
+			score_popups[i].active = true;
+			break;
+		}
+	}
+}
+
+
 bool find_matches() {
 	bool found = false;
 	for (int y = 0; y < BOARD_SIZE; y++) {
