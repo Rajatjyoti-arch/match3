@@ -141,7 +141,7 @@ int main(void) {
     InitAudioDevice();
 
     background = LoadTexture("assets/back.png");
-	background_music = LoadMusic("assets/music.mp3");
+	background_music = LoadMusicStream("assets/music.mp3");
 	match_sound = LoadSound("assets/match.mp3");
 	PlayMusicStream(background_music);
     init_board();
