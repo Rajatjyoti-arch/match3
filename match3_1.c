@@ -247,12 +247,11 @@ int main(void) {
         for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
 			if (score_popups[i].active) {
 				score_popups[i].lifetime -= GetFrameTime();
-                
+                score_popups[i].position.y -= 30 * GetFrameTime();
+                score_popups[i].alpha = score_popups[i].lifetime;
+
 				if (score_popups[i].lifetime <= 0.0f) {
 					score_popups[i].active = false;
-				}
-				else {
-					score_popups[i].position.y -= 50.0f * GetFrameTime();
 				}
 			}
 		}
@@ -310,7 +309,6 @@ int main(void) {
 			}
 		}
 
-		// draw selected tile
 		if (selected_tile.x >= 0) {
 			DrawRectangleLinesEx((Rectangle) {
 				grid_origin.x + (selected_tile.x * TILE_SIZE),
@@ -320,6 +318,13 @@ int main(void) {
 		}
 
         DrawText(TextFormat("Score : %d", score), 20,20, 24, WHITE);
+
+        for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+            if (score_popups[i].active) {
+                Color c = Fade(YELLOW, score_popups[i].alpha);
+                DrawText(TextFormat("+%d", score_popups[i].amount), score_popups[i].position.x, score_popups[i].position.y, 18, c);
+            }
+        }
 
         EndDrawing();
     }
