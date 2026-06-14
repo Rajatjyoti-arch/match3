@@ -62,6 +62,7 @@ bool find_matches() {
 				matched[y][x] = matched[y][x + 1] = matched[y][x + 2] = true;
 				score += 10;
 				found = true;
+                PlaySound(match_sound);
 			}
 		}
 	}
@@ -74,6 +75,7 @@ bool find_matches() {
 				matched[y][x] = matched[y + 1][x] = matched[y + 2][x] = true;
 				score += 10;
 				found = true;
+                PlaySound(match_sound);
 			}
 		}
 	}
@@ -136,14 +138,18 @@ int main(void) {
     SetTargetFPS(60);
     srand(time(NULL));
 
+    InitAudioDevice();
+
     background = LoadTexture("assets/back.png");
 	background_music = LoadMusic("assets/music.mp3");
 	match_sound = LoadSound("assets/match.mp3");
-    
+	PlayMusicStream(background_music);
     init_board();
     Vector2 mouse = {0, 0};
 
     while(!WindowShouldClose()) {
+
+        UpdateMusicStream(background_music);
 
 		mouse = GetMousePosition();
 		if (tile_state == STATE_IDLE && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
@@ -272,6 +278,11 @@ int main(void) {
         EndDrawing();
     }
 
+    StopMusicStream(background_music);
+    UnloadMusicStream(background_music);
+    UnloadSound(match_sound);
+
+    CloseAudioDevice();
     UnloadTexture(background);
 
     CloseWindow();
