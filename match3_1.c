@@ -15,7 +15,7 @@ char board[BOARD_SIZE][BOARD_SIZE];
 bool matched[BOARD_SIZE][BOARD_SIZE] = {0};
 float fall_offset[BOARD_SIZE][BOARD_SIZE] = {0};
 
-int score = 200;
+int score = 0;
 Vector2 grid_origin;
 Texture2D background;
 Vector2 selected_tile = { -1, -1 };
@@ -23,6 +23,8 @@ float fall_speed = 8.0f;
 float match_delay_timer = 0.0f;
 const float MATCH_DELAY_DURATION = 0.2f;
 
+float score_scale = 1.0f;
+float score_scale_velocity = o
 Music background_music;
 Sound match_sound;
 
@@ -39,6 +41,7 @@ typedef struct {
     int amount;
     float lifetime;
     bool active;
+    float alpha;
 } ScorePopup;
 
 ScorePopup score_popups[MAX_SCORE_POPUPS] = {0};
@@ -322,7 +325,8 @@ int main(void) {
         for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
             if (score_popups[i].active) {
                 Color c = Fade(YELLOW, score_popups[i].alpha);
-                DrawText(TextFormat("+%d", score_popups[i].amount), score_popups[i].position.x, score_popups[i].position.y, 18, c);
+                DrawText(
+                    TextFormat("+%d", score_popups[i].amount), score_popups[i].position.x, score_popups[i].position.y, 20, c);
             }
         }
 
