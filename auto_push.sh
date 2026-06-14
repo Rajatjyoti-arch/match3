@@ -20,7 +20,11 @@ while true; do
             CHANGED_FILES="$CHANGED_FILES, and $(($FILE_COUNT - 5)) more"
         fi
         
-        COMMIT_MSG="Auto-update: Modified $CHANGED_FILES"
+        # Select a human-sounding verb for the commit message
+        VERBS=("Updated" "Modified" "Tweaked" "Refined" "Adjusted" "Worked on")
+        VERB=${VERBS[$RANDOM % ${#VERBS[@]}]}
+        
+        COMMIT_MSG="$VERB $CHANGED_FILES"
         
         git commit -m "$COMMIT_MSG"
         git push origin master
@@ -28,6 +32,6 @@ while true; do
         echo "[$(date)] Pushed: $COMMIT_MSG" >> auto_push.log
     fi
     
-    # Wait 60 seconds before next check
-    sleep 60
+    # Wait 5 minutes (300 seconds) before next check
+    sleep 300
 done
