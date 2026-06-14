@@ -33,6 +33,17 @@ typedef enum {
 
 TileState tile_state;
 
+typedef struct {
+    Vector2 position;
+    int amount;
+    float lifetime;
+    bool active;
+} ScorePopup;
+
+ScorePopup score_popups[100];
+
+
+
 char random_tile() {
 	return tile_chars[rand() % TILE_TYPES];
 }
@@ -63,6 +74,8 @@ bool find_matches() {
 				score += 10;
 				found = true;
                 PlaySound(match_sound);
+
+                add_score_popup(x, y,10, grid_origin);
 			}
 		}
 	}
@@ -76,6 +89,8 @@ bool find_matches() {
 				score += 10;
 				found = true;
                 PlaySound(match_sound);
+
+                add_score_popup(x, y, 10, grid_origin);
 			}
 		}
 	}
