@@ -63,8 +63,8 @@ void add_score_popup(int x, int y, int amount, Vector2 grid_origin) {
 	for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
 		if (!score_popups[i].active) {
 			score_popups[i].position = (Vector2) {
-				grid_origin.x + x * TILE_SIZE,
-				grid_origin.y + y * TILE_SIZE
+				grid_origin.x + x * TILE_SIZE + TILE_SIZE / 2,
+				grid_origin.y + y * TILE_SIZE + TILE_SIZE / 2
 			};
 			score_popups[i].amount = amount;
 			score_popups[i].lifetime = 1.0f;
@@ -240,6 +240,18 @@ int main(void) {
 				}
 				else {
 					tile_state = STATE_IDLE;
+				}
+			}
+		}
+
+        for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
+			if (score_popups[i].active) {
+				score_popups[i].lifetime -= GetFrameTime();
+				if (score_popups[i].lifetime <= 0.0f) {
+					score_popups[i].active = false;
+				}
+				else {
+					score_popups[i].position.y -= 50.0f * GetFrameTime();
 				}
 			}
 		}
