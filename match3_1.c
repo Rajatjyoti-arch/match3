@@ -247,6 +247,7 @@ int main(void) {
         for (int i = 0; i < MAX_SCORE_POPUPS; i++) {
 			if (score_popups[i].active) {
 				score_popups[i].lifetime -= GetFrameTime();
+                
 				if (score_popups[i].lifetime <= 0.0f) {
 					score_popups[i].active = false;
 				}

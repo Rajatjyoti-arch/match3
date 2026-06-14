@@ -4,3 +4,5 @@ match3_1
 *.out
 .vscode/
 raylib_src/
+auto_push.sh
+auto_push.log
