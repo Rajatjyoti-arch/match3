@@ -22,6 +22,9 @@ float fall_speed = 8.0f;
 float match_delay_timer = 0.0f;
 const float MATCH_DELAY_DURATION = 0.2f;
 
+Music background_music;
+Sound match_sound;
+
 typedef enum {
 	STATE_IDLE,
 	STATE_ANIMATING,
@@ -134,7 +137,9 @@ int main(void) {
     srand(time(NULL));
 
     background = LoadTexture("assets/back.png");
-
+	background_music = LoadMusic("assets/music.mp3");
+	match_sound = LoadSound("assets/match.mp3");
+    
     init_board();
     Vector2 mouse = {0, 0};
 
